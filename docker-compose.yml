@@ -1,0 +1,73 @@
+version: '3.8'
+
+x-default: &default
+  dns:
+    - 1.1.1.1
+    - 1.0.0.1
+
+x-mysqlenv:
+  - &mysqlUser admin
+  - &mysqlPass secret
+  - &mysqlDbName my_wiki
+
+services:
+
+  mediawiki:
+    <<: *default
+    image: mediawiki:${MEDIAWIKI_VERSION}
+    ports:
+      - 8080:80
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+    volumes:
+      - wiki_images:/var/www/html/images
+      - wiki_sites:/var/www/html/sites
+      # After initial setup, download LocalSettings.php to the same directory as
+      # this yaml and uncomment the following line and use compose to restart
+      # the mediawiki service
+      - ${PWD}/LocalSettings.php:/var/www/html/LocalSettings.php
+    environment:
+      TZ: Asia/Kolkata
+    restart: on-failure
+
+  database:
+    <<: *default
+    image: mariadb:${MARIADB_VERSION}
+    ports:
+      - 3306
+    environment:
+      # @see https://phabricator.wikimedia.org/source/mediawiki/browse/master/includes/DefaultSettings.php
+      MYSQL_DATABASE: *mysqlDbName
+      MYSQL_USER: *mysqlUser
+      MYSQL_PASSWORD: *mysqlPass
+      MYSQL_ROOT_PASSWORD: *mysqlPass
+      TZ: Asia/Kolkata
+    healthcheck:
+      test: mysqladmin --user $$MYSQL_USER --password=$$MYSQL_PASSWORD --port 3306 --protocol TCP ping 2>&1 | grep "mysqld is alive" || exit 1
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 30s
+    restart: on-failure
+
+  init-db:
+    <<: *default
+    image: mariadb:${MARIADB_VERSION}
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      DB_SERVICE_HOST: database
+      DB_SERVICE_PORT: 3306
+      MYSQL_DATABASE: *mysqlDbName
+      MYSQL_USER: *mysqlUser
+      MYSQL_PASSWORD: *mysqlPass
+    volumes:
+      - ${PWD}/base_data_my_wiki.sql:/base_data_my_wiki.sql
+    command: ["/bin/sh", "-c", "mysql --host=$$DB_SERVICE_HOST --user=$$MYSQL_USER --password=$$MYSQL_PASSWORD --port=$$DB_SERVICE_PORT --database=$$MYSQL_DATABASE < /base_data_my_wiki.sql"]
+    restart: on-failure
+
+volumes:
+  wiki_images:
+  wiki_sites:
